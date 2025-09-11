@@ -131,6 +131,12 @@ export default function Receta() {
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [snackbarSeverity, setSnackbarSeverity] = useState("success");
 
+  const isUserLoggedIn = () => {
+    const user = localStorage.getItem("user");
+    const token = localStorage.getItem("token");
+    return user && token;
+  };
+
   const isAIGenerated = receta?.IA === true;
 
   useEffect(() => {
@@ -146,6 +152,7 @@ export default function Receta() {
     } else {
       setRecipeUser(false);
     }
+
   }, [user, receta]);
 
   const getTipoComidaDisplay = (tipoComida) => {
@@ -847,24 +854,36 @@ export default function Receta() {
                       Reviews ({reseñas.length})
                     </SectionTitle>
 
-                    <Link to="/create-review" style={{ textDecoration: "none" }}>
+                    <Link
+                      to="/create-review"
+                      style={{
+                        textDecoration: "none",
+                        pointerEvents: isUserLoggedIn() ? "auto" : "none"
+                      }}
+                    >
                       <Button
                         variant="contained"
+                        disabled={!isUserLoggedIn()}
                         sx={{
-                          backgroundColor: "#ff7043",
-                          color: "white",
+                          backgroundColor: isUserLoggedIn() ? "#ff7043" : "#e0e0e0",
+                          color: isUserLoggedIn() ? "white" : "#9e9e9e",
                           borderRadius: "25px",
                           px: { xs: 2, sm: 3 },
                           py: { xs: 1, sm: 1.5 },
                           fontSize: { xs: "0.8rem", sm: "0.875rem" },
-                          boxShadow: "0 4px 12px rgba(255, 112, 67, 0.3)",
+                          boxShadow: isUserLoggedIn() ? "0 4px 12px rgba(255, 112, 67, 0.3)" : "none",
+                          cursor: isUserLoggedIn() ? "pointer" : "not-allowed",
                           '&:hover': {
-                            backgroundColor: "#f4511e",
-                            boxShadow: "0 6px 16px rgba(255, 112, 67, 0.4)"
+                            backgroundColor: isUserLoggedIn() ? "#f4511e" : "#e0e0e0",
+                            boxShadow: isUserLoggedIn() ? "0 6px 16px rgba(255, 112, 67, 0.4)" : "none"
+                          },
+                          '&:disabled': {
+                            backgroundColor: "#e0e0e0",
+                            color: "#9e9e9e"
                           }
                         }}
                       >
-                        Write review
+                        {isUserLoggedIn() ? "Write review" : "Login to write review"}
                       </Button>
                     </Link>
                   </Box>
