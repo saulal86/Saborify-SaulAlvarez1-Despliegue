@@ -1,0 +1,33 @@
+@media (max-width: 768px) {
+  .tarjeta-info {
+    margin-top: 3em;
+  }
+  .carrusel-recetas {
+    padding-top: 4em;
+  }
+  #tarjeta-pasos{
+    margin-top: 3em;
+  }
+}
+
+#dificultad-select{
+  padding-right: 110px;
+}
+
+#tipos-comida-select{
+  padding-right: 160px;
+}
+
+#alergenos-select div:first-child {
+  padding-right: 185px;
+}
+
+@keyframes plateSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes orbit {
+  0%   { transform: rotate(0deg) translate(40px) rotate(0deg); }
+  100% { transform: rotate(360deg) translate(40px) rotate(-360deg); }
+}

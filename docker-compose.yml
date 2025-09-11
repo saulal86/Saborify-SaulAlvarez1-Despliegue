@@ -1,0 +1,56 @@
+services:
+  backend:
+    build: ./back
+    container_name: back
+    restart: always
+    ports:
+      - 8000:80
+    depends_on:
+      - db
+    environment:
+      - DB_CONNECTION=mysql
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_DATABASE=saborify
+      - DB_USERNAME=root
+      - DB_PASSWORD=root
+
+  front:
+    build: ./front
+    container_name: front
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - 80:80
+    environment:
+      - NODE_ENV=production
+
+  db:
+    image: mysql:8.0
+    container_name: database
+    restart: always
+    ports:
+      - 3307:3306
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: saborify
+      MYSQL_USER: saborify_user
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    restart: always
+    depends_on:
+      - db
+    ports:
+      - 8081:80
+    environment:
+      - PMA_HOST=db
+      - MYSQL_ROOT_PASSWORD=root
+
+volumes:
+  mysql_data:
