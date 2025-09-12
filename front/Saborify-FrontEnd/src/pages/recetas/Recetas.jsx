@@ -21,6 +21,7 @@ import TimerOffIcon from "@mui/icons-material/TimerOff";
 import TuneIcon from "@mui/icons-material/Tune";
 import NoFoodIcon from "@mui/icons-material/NoFood";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import RecetaCard from "../../components/RecetaCard";
 import Spinner from "../../components/Spinner";
 
@@ -134,18 +135,60 @@ export default function Recetas() {
                 <Link to="/ai-recipe-search" style={{ textDecoration: "none" }}>
                     <Button
                         startIcon={<SmartToyIcon />}
+                        endIcon={<AutoAwesomeIcon />}
                         variant="contained"
+                        size="large"
                         sx={{
                             textTransform: "none",
-                            borderRadius: 2,
-                            backgroundColor: "#6200ea",
+                            borderRadius: 3,
+                            px: 4,
+                            py: 1.5,
+                            fontSize: "1.1rem",
+                            fontWeight: "bold",
+                            background: "linear-gradient(45deg, #6200ea 30%, #9c27b0 90%)",
                             color: "#ffffff",
+                            boxShadow: "0 8px 25px rgba(98, 0, 234, 0.3)",
+                            position: "relative",
+                            overflow: "hidden",
+                            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                             "&:hover": {
-                                backgroundColor: "#3700b3",
+                                background: "linear-gradient(45deg, #3700b3 30%, #7b1fa2 90%)",
+                                boxShadow: "0 12px 35px rgba(98, 0, 234, 0.4)",
+                                transform: "translateY(-2px)",
+                            },
+                            "&:before": {
+                                content: '""',
+                                position: "absolute",
+                                top: 0,
+                                left: "-100%",
+                                width: "100%",
+                                height: "100%",
+                                background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)",
+                                transition: "left 0.5s",
+                            },
+                            "&:hover:before": {
+                                left: "100%",
+                            },
+                            "& .MuiButton-startIcon": {
+                                marginRight: "8px",
+                            },
+                            "& .MuiButton-endIcon": {
+                                marginLeft: "8px",
+                                animation: "sparkle 2s ease-in-out infinite",
+                            },
+                            "@keyframes sparkle": {
+                                "0%, 100%": { 
+                                    transform: "scale(1) rotate(0deg)",
+                                    opacity: 1 
+                                },
+                                "50%": { 
+                                    transform: "scale(1.2) rotate(180deg)",
+                                    opacity: 0.8 
+                                },
                             },
                         }}
                     >
-                        Search by ingredients (AI)
+                        AI Recipe Generator
                     </Button>
                 </Link>
             );
@@ -153,11 +196,17 @@ export default function Recetas() {
             return (
                 <Button
                     startIcon={<SmartToyIcon />}
+                    endIcon={<AutoAwesomeIcon />}
                     variant="contained"
+                    size="large"
                     disabled
                     sx={{
                         textTransform: "none",
-                        borderRadius: 2,
+                        borderRadius: 3,
+                        px: 4,
+                        py: 1.5,
+                        fontSize: "1.1rem",
+                        fontWeight: "bold",
                         backgroundColor: "#e0e0e0",
                         color: "#9e9e9e",
                         "&.Mui-disabled": {
@@ -167,7 +216,7 @@ export default function Recetas() {
                     }}
                     title="Inicia sesión para usar esta función"
                 >
-                    Search by ingredients (AI)
+                    AI Recipe Generator
                 </Button>
             );
         }
@@ -240,6 +289,40 @@ export default function Recetas() {
                     Find here all the recipes created by Saborify users. You can filter by difficulty, preparation time, and allergens. Discover new delights to cook!
                 </Typography>
             </Box>
+
+            {/* AI Button destacado en su propia sección */}
+            <Paper
+                elevation={6}
+                sx={{
+                    p: 4,
+                    mb: 4,
+                    borderRadius: 4,
+                    background: "linear-gradient(135deg, #f3e5f5 0%, #e8eaf6 100%)",
+                    border: "2px solid #e1bee7",
+                    textAlign: "center",
+                }}
+            >
+                <Box mb={2}>
+                    <Typography
+                        variant="h6"
+                        sx={{
+                            color: "#6200ea",
+                            fontWeight: "bold",
+                            mb: 1,
+                        }}
+                    >
+                        🤖 New! AI Recipe Generator
+                    </Typography>
+                    <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ mb: 3 }}
+                    >
+                        Tell us what ingredients you have and our AI will create personalized recipes for you
+                    </Typography>
+                </Box>
+                {renderAIButton()}
+            </Paper>
 
             <Paper
                 elevation={3}
@@ -356,8 +439,6 @@ export default function Recetas() {
                             ))}
                         </Select>
                     </FormControl>
-
-                    {renderAIButton()}
                 </Box>
             </Paper>
 

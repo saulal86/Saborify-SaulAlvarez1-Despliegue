@@ -18,13 +18,39 @@ import RestaurantIcon from "@mui/icons-material/Restaurant";
 import CategoryIcon from "@mui/icons-material/Category";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import LocalDiningIcon from "@mui/icons-material/LocalDining";
-import { useContext } from "react";
+import { useContext, useMemo } from "react";
 import PropTypes from 'prop-types';
 import { SaborifyContext } from "../context/SaborifyProvider";
-import imagenPlaceholder from '../assets/imagenRecetaPlaceholder.png';
+
+import imagenPlaceholder1 from '../assets/imagenRecetaPlaceholder.png';
+import imagenPlaceholder2 from '../assets/imagenRecetaPlaceholder2.jpg';
+import imagenPlaceholder3 from '../assets/imagenRecetaPlaceholder3.jpg';
+import imagenPlaceholder4 from '../assets/imagenRecetaPlaceholder4.jpg';
+
+const placeholderImages = [
+    imagenPlaceholder1,
+    imagenPlaceholder2,
+    imagenPlaceholder3,
+    imagenPlaceholder4
+];
 
 export default function RecetaCard({ receta }) {
     const { setReceta } = useContext(SaborifyContext);
+
+    const getRandomPlaceholder = useMemo(() => {
+        if (receta.imagen) return receta.imagen;
+        
+        const seed = receta.id.toString();
+        let hash = 0;
+        for (let i = 0; i < seed.length; i++) {
+            const char = seed.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        
+        const index = Math.abs(hash) % placeholderImages.length;
+        return placeholderImages[index];
+    }, [receta.id, receta.imagen]);
 
     if (!receta || !receta.id || !receta.nombre) {
         return null;
@@ -101,7 +127,7 @@ export default function RecetaCard({ receta }) {
                     <CardMedia
                         component="img"
                         height="180"
-                        image={receta.imagen || imagenPlaceholder}
+                        image={getRandomPlaceholder}
                         alt={receta.nombre}
                     />
 
