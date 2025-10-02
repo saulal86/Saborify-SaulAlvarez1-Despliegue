@@ -154,7 +154,7 @@ class AIRecipeController extends Controller
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-            ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={$apiKey}", [
+            ])->post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={$apiKey}", [
                 'contents' => [
                     [
                         'parts' => [
@@ -237,7 +237,7 @@ class AIRecipeController extends Controller
                 try {
                     $response = Http::withHeaders([
                         'Content-Type' => 'application/json',
-                    ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={$apiKey}", [
+                    ])->post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={$apiKey}", [
                         'contents' => [
                             [
                                 'parts' => [
@@ -381,7 +381,7 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-            ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={$apiKey}", [
+            ])->post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={$apiKey}", [
                 'contents' => [
                     [
                         'parts' => [
@@ -483,16 +483,16 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
 
         try {
 
-                $recetas = $this->generarRecetasConIA($ingredients);
-                Log::info('Recetas generadas por IA: ' . count($recetas));
+            $recetas = $this->generarRecetasConIA($ingredients);
+            Log::info('Recetas generadas por IA: ' . count($recetas));
 
-                return response()->json([
-                    'recetas' => $recetas,
-                    'message' => 'Recetas creadas por IA basadas en tus ingredientes',
-                    'total' => count($recetas),
-                    'recetas_bd' => 0,
-                    'recetas_ia' => count($recetas)
-                ]);
+            return response()->json([
+                'recetas' => $recetas,
+                'message' => 'Recetas creadas por IA basadas en tus ingredientes',
+                'total' => count($recetas),
+                'recetas_bd' => 0,
+                'recetas_ia' => count($recetas)
+            ]);
         } catch (\Exception $e) {
             Log::error('Error en búsqueda de recetas por IA: ' . $e->getMessage());
             Log::error('Stack trace: ' . $e->getTraceAsString());
