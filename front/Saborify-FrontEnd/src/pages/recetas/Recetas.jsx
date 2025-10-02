@@ -291,7 +291,7 @@ export default function Recetas() {
             </Box>
 
             {/* AI Button destacado en su propia sección */}
-            <Paper
+            {/* <Paper
                 elevation={6}
                 sx={{
                     p: 4,
@@ -322,7 +322,7 @@ export default function Recetas() {
                     </Typography>
                 </Box>
                 {renderAIButton()}
-            </Paper>
+            </Paper> */}
 
             <Paper
                 elevation={3}

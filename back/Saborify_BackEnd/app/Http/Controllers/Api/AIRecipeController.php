@@ -480,27 +480,37 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
 
     public function buscarRecetasPorIngredientes(Request $request)
     {
-        $request->validate([
-            'ingredients' => 'required|array|min:1',
-            'ingredients.*' => 'string'
-        ]);
-
-        $ingredients = array_map('strtolower', $request->ingredients);
-
-        Log::info('Buscando recetas con ingredientes: ', $ingredients);
-
         try {
+            $request->validate([
+                'ingredients' => 'required|array|min:1',
+                'ingredients.*' => 'string'
+            ]);
+
+            $ingredients = array_map('strtolower', $request->ingredients);
+            Log::info('Buscando recetas con ingredientes: ', $ingredients);
 
             $recetas = $this->generarRecetasConIA($ingredients);
             Log::info('Recetas generadas por IA: ' . count($recetas));
 
-            return response()->json([
+            // IMPORTANTE: Log la respuesta completa antes de enviarla
+            $response = [
                 'recetas' => $recetas,
                 'message' => 'Recetas creadas por IA basadas en tus ingredientes',
                 'total' => count($recetas),
                 'recetas_bd' => 0,
                 'recetas_ia' => count($recetas)
-            ]);
+            ];
+
+            Log::info('Respuesta a enviar: ' . json_encode($response));
+
+            return response()->json($response);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('Error de validación: ' . json_encode($e->errors()));
+            return response()->json([
+                'message' => 'Datos de entrada inválidos',
+                'errors' => $e->errors(),
+                'recetas' => []
+            ], 422);
         } catch (\Exception $e) {
             Log::error('Error en búsqueda de recetas por IA: ' . $e->getMessage());
             Log::error('Stack trace: ' . $e->getTraceAsString());
