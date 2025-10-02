@@ -154,7 +154,7 @@ class AIRecipeController extends Controller
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-            ])->post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={$apiKey}", [
+            ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={$apiKey}", [
                 'contents' => [
                     [
                         'parts' => [
@@ -237,7 +237,7 @@ class AIRecipeController extends Controller
                 try {
                     $response = Http::withHeaders([
                         'Content-Type' => 'application/json',
-                    ])->post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={$apiKey}", [
+                    ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={$apiKey}", [
                         'contents' => [
                             [
                                 'parts' => [
@@ -252,16 +252,24 @@ class AIRecipeController extends Controller
                         ]
                     ]);
 
+                    Log::info('Status de respuesta: ' . $response->status());
+                    Log::info('Body completo: ' . $response->body());
+
                     if ($response->successful()) {
                         $responseData = $response->json();
+                        Log::info('Response data: ' . json_encode($responseData));
+
                         if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
                             $testResult = $responseData['candidates'][0]['content']['parts'][0]['text'];
+                        } else {
+                            $testError = 'Estructura de respuesta inesperada: ' . json_encode($responseData);
                         }
                     } else {
                         $testError = 'HTTP ' . $response->status() . ': ' . $response->body();
                     }
                 } catch (\Exception $e) {
                     $testError = $e->getMessage();
+                    Log::error('Excepción en test: ' . $e->getMessage());
                 }
             }
 
@@ -381,7 +389,7 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
 
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-            ])->post("https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={$apiKey}", [
+            ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={$apiKey}", [
                 'contents' => [
                     [
                         'parts' => [
@@ -393,7 +401,7 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
                 ],
                 'generationConfig' => [
                     'temperature' => 0.8,
-                    'maxOutputTokens' => 1200, // Aumentado para recetas completas
+                    'maxOutputTokens' => 1200,
                 ]
             ]);
 
