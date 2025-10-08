@@ -24,15 +24,29 @@ class AIRecipeController extends Controller
         $content = preg_replace('/^```(?:json)?\s*/im', '', $content);
         $content = preg_replace('/```\s*$/im', '', $content);
 
-        // Eliminar caracteres de control excepto \n, \r, \t
+        // CRÍTICO: Convertir saltos de línea y retornos de carro a espacios
+        // Esto es lo que causa el "Control character error"
+        $content = str_replace(["\r\n", "\r", "\n"], ' ', $content);
+
+        // Eliminar tabulaciones
+        $content = str_replace("\t", ' ', $content);
+
+        // Eliminar otros caracteres de control
         $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
 
-        // Eliminar saltos de línea dentro de strings (común en respuestas de IA)
-        // Reemplazar \n reales dentro de valores de string por espacios
-        $content = preg_replace('/"\s*\n\s*([^":])/m', '" $1', $content);
+        // Eliminar múltiples espacios consecutivos
+        $content = preg_replace('/\s+/', ' ', $content);
+
+        // Restaurar espacios importantes en el JSON
+        $content = str_replace('{ ', '{', $content);
+        $content = str_replace(' }', '}', $content);
+        $content = str_replace('[ ', '[', $content);
+        $content = str_replace(' ]', ']', $content);
+        $content = str_replace(' , ', ',', $content);
+        $content = str_replace(' : ', ':', $content);
 
         // Eliminar comas finales antes de ] o }
-        $content = preg_replace('/,(\s*[}\]])/m', '$1', $content);
+        $content = preg_replace('/,\s*([}\]])/', '$1', $content);
 
         // Eliminar espacios en blanco al inicio y final
         $content = trim($content);
@@ -42,6 +56,22 @@ class AIRecipeController extends Controller
             // Buscar el primer { o [
             if (preg_match('/([\{\[].*)$/s', $content, $matches)) {
                 $content = $matches[1];
+            }
+        }
+
+        // Verificar que el JSON esté completo (termine con } o ])
+        if (!preg_match('/[}\]]$/', $content)) {
+            Log::warning('JSON parece incompleto, intentando cerrar estructura');
+            // Contar llaves y corchetes
+            $openBraces = substr_count($content, '{') - substr_count($content, '}');
+            $openBrackets = substr_count($content, '[') - substr_count($content, ']');
+
+            // Intentar cerrar
+            for ($i = 0; $i < $openBraces; $i++) {
+                $content .= '}';
+            }
+            for ($i = 0; $i < $openBrackets; $i++) {
+                $content .= ']';
             }
         }
 
@@ -445,7 +475,7 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
                 ],
                 'generationConfig' => [
                     'temperature' => 0.8,
-                    'maxOutputTokens' => 1200,
+                    'maxOutputTokens' => 2500,
                 ]
             ]);
 
