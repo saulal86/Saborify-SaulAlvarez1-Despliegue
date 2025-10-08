@@ -17,18 +17,33 @@ class AIRecipeController extends Controller
      */
     private function limpiarJsonString($content)
     {
-        // Eliminar caracteres de control excepto \n, \r, \t
-        $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
-
         // Eliminar BOM (Byte Order Mark) si existe
         $content = preg_replace('/^\xEF\xBB\xBF/', '', $content);
 
-        // Limpiar posibles bloques de código markdown
-        $content = preg_replace('/```json\s*/i', '', $content);
-        $content = preg_replace('/```\s*$/i', '', $content);
+        // Limpiar posibles bloques de código markdown (más agresivo)
+        $content = preg_replace('/^```(?:json)?\s*/im', '', $content);
+        $content = preg_replace('/```\s*$/im', '', $content);
+
+        // Eliminar caracteres de control excepto \n, \r, \t
+        $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
+
+        // Eliminar saltos de línea dentro de strings (común en respuestas de IA)
+        // Reemplazar \n reales dentro de valores de string por espacios
+        $content = preg_replace('/"\s*\n\s*([^":])/m', '" $1', $content);
+
+        // Eliminar comas finales antes de ] o }
+        $content = preg_replace('/,(\s*[}\]])/m', '$1', $content);
 
         // Eliminar espacios en blanco al inicio y final
         $content = trim($content);
+
+        // Verificar que empiece con { o [
+        if (!preg_match('/^[\{\[]/', $content)) {
+            // Buscar el primer { o [
+            if (preg_match('/([\{\[].*)$/s', $content, $matches)) {
+                $content = $matches[1];
+            }
+        }
 
         return $content;
     }
@@ -203,18 +218,19 @@ class AIRecipeController extends Controller
             }
 
             $content = $responseData['candidates'][0]['content']['parts'][0]['text'];
-            Log::info('Respuesta RAW de Gemini para sugerencias: ' . $content);
+            Log::info('Respuesta RAW de Gemini para sugerencias (primeros 500 chars): ' . substr($content, 0, 500));
 
             // Limpiar el contenido
             $content = $this->limpiarJsonString($content);
-            Log::info('Contenido limpio: ' . $content);
+            Log::info('Contenido limpio (primeros 500 chars): ' . substr($content, 0, 500));
+            Log::info('Contenido limpio (últimos 100 chars): ' . substr($content, -100));
 
             // Intentar decodificar
             $parsedResponse = json_decode($content, true);
 
             // Si aún falla, intentar con JSON_INVALID_UTF8_IGNORE
             if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::warning('Primer intento de JSON falló para sugerencias, reintentando');
+                Log::warning('Primer intento de JSON falló para sugerencias: ' . json_last_error_msg());
                 $parsedResponse = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
             }
 
@@ -450,14 +466,16 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
             // Limpiar el contenido
             $content = $this->limpiarJsonString($content);
 
-            Log::info('Contenido limpio recibido: ' . substr($content, 0, 200) . '...');
+            Log::info('Contenido limpio recibido (primeros 500 chars): ' . substr($content, 0, 500));
+            Log::info('Contenido limpio recibido (últimos 200 chars): ' . substr($content, -200));
 
             // Intentar decodificar
             $parsedResponse = json_decode($content, true);
 
             // Si aún falla, intentar con JSON_INVALID_UTF8_IGNORE
             if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::warning('Primer intento de JSON falló, intentando con JSON_INVALID_UTF8_IGNORE');
+                Log::warning('Primer intento de JSON falló: ' . json_last_error_msg());
+                Log::warning('Intentando con JSON_INVALID_UTF8_IGNORE');
                 $parsedResponse = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
             }
 
