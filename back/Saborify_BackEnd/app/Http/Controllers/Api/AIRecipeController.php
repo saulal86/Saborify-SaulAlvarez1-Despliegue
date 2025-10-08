@@ -12,6 +12,26 @@ use Illuminate\Support\Facades\Http;
 
 class AIRecipeController extends Controller
 {
+    /**
+     * Limpia el string JSON de caracteres de control y otros problemas
+     */
+    private function limpiarJsonString($content)
+    {
+        // Eliminar caracteres de control excepto \n, \r, \t
+        $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
+
+        // Eliminar BOM (Byte Order Mark) si existe
+        $content = preg_replace('/^\xEF\xBB\xBF/', '', $content);
+
+        // Limpiar posibles bloques de código markdown
+        $content = preg_replace('/```json\s*/i', '', $content);
+        $content = preg_replace('/```\s*$/i', '', $content);
+
+        // Eliminar espacios en blanco al inicio y final
+        $content = trim($content);
+
+        return $content;
+    }
 
     public function ingredientesPopulares()
     {
@@ -182,14 +202,22 @@ class AIRecipeController extends Controller
                 return $this->sugerirIngredientesBasicos($ingredients);
             }
 
-            $content = trim($responseData['candidates'][0]['content']['parts'][0]['text']);
+            $content = $responseData['candidates'][0]['content']['parts'][0]['text'];
             Log::info('Respuesta RAW de Gemini para sugerencias: ' . $content);
 
-            $content = preg_replace('/```json\s*/', '', $content);
-            $content = preg_replace('/```\s*$/', '', $content);
+            // Limpiar el contenido
+            $content = $this->limpiarJsonString($content);
             Log::info('Contenido limpio: ' . $content);
 
+            // Intentar decodificar
             $parsedResponse = json_decode($content, true);
+
+            // Si aún falla, intentar con JSON_INVALID_UTF8_IGNORE
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::warning('Primer intento de JSON falló para sugerencias, reintentando');
+                $parsedResponse = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
+            }
+
             Log::info('JSON decode - Error: ' . json_last_error() . ' (' . json_last_error_msg() . ')');
 
             if (json_last_error() !== JSON_ERROR_NONE) {
@@ -417,15 +445,21 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
                 return [];
             }
 
-            $content = trim($responseData['candidates'][0]['content']['parts'][0]['text']);
+            $content = $responseData['candidates'][0]['content']['parts'][0]['text'];
 
-            $content = preg_replace('/```json\s*/', '', $content);
-            $content = preg_replace('/```\s*$/', '', $content);
-            $content = trim($content);
+            // Limpiar el contenido
+            $content = $this->limpiarJsonString($content);
 
-            Log::info('Contenido recibido: ' . substr($content, 0, 200) . '...');
+            Log::info('Contenido limpio recibido: ' . substr($content, 0, 200) . '...');
 
+            // Intentar decodificar
             $parsedResponse = json_decode($content, true);
+
+            // Si aún falla, intentar con JSON_INVALID_UTF8_IGNORE
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::warning('Primer intento de JSON falló, intentando con JSON_INVALID_UTF8_IGNORE');
+                $parsedResponse = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
+            }
 
             if (json_last_error() !== JSON_ERROR_NONE) {
                 Log::error('Error parsing JSON: ' . json_last_error_msg());
