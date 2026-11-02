@@ -7,75 +7,127 @@ use App\Models\Receta;
 use App\Models\Ingrediente;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 class AIRecipeController extends Controller
 {
     /**
+     * Modelo de Gemini a usar. Cámbialo si tu cuenta tiene otro disponible
+     * (puedes verlo en la ruta debugGemini -> modelos_disponibles).
+     */
+    private const GEMINI_MODEL = 'gemini-2.5-flash';
+
+    private const INGREDIENTES_DEFECTO = [
+        'cebolla',
+        'ajo',
+        'tomate',
+        'aceite de oliva',
+        'sal',
+        'pimienta',
+        'perejil',
+        'huevos',
+        'patatas',
+        'arroz'
+    ];
+
+    /**
      * Limpia el string JSON de caracteres de control y otros problemas
      */
     private function limpiarJsonString($content)
     {
+        // Eliminar caracteres de control excepto \n, \r, \t
+        $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
+
         // Eliminar BOM (Byte Order Mark) si existe
         $content = preg_replace('/^\xEF\xBB\xBF/', '', $content);
 
-        // Limpiar posibles bloques de código markdown (más agresivo)
-        $content = preg_replace('/^```(?:json)?\s*/im', '', $content);
-        $content = preg_replace('/```\s*$/im', '', $content);
+        // Limpiar posibles bloques de código markdown
+        $content = preg_replace('/```json\s*/i', '', $content);
+        $content = preg_replace('/```\s*$/i', '', $content);
 
-        // CRÍTICO: Convertir saltos de línea y retornos de carro a espacios
-        // Esto es lo que causa el "Control character error"
-        $content = str_replace(["\r\n", "\r", "\n"], ' ', $content);
+        return trim($content);
+    }
 
-        // Eliminar tabulaciones
-        $content = str_replace("\t", ' ', $content);
-
-        // Eliminar otros caracteres de control
-        $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
-
-        // Eliminar múltiples espacios consecutivos
-        $content = preg_replace('/\s+/', ' ', $content);
-
-        // Restaurar espacios importantes en el JSON
-        $content = str_replace('{ ', '{', $content);
-        $content = str_replace(' }', '}', $content);
-        $content = str_replace('[ ', '[', $content);
-        $content = str_replace(' ]', ']', $content);
-        $content = str_replace(' , ', ',', $content);
-        $content = str_replace(' : ', ':', $content);
-
-        // Eliminar comas finales antes de ] o }
-        $content = preg_replace('/,\s*([}\]])/', '$1', $content);
-
-        // Eliminar espacios en blanco al inicio y final
-        $content = trim($content);
-
-        // Verificar que empiece con { o [
-        if (!preg_match('/^[\{\[]/', $content)) {
-            // Buscar el primer { o [
-            if (preg_match('/([\{\[].*)$/s', $content, $matches)) {
-                $content = $matches[1];
-            }
+    /**
+     * Llama a Gemini y devuelve el JSON ya decodificado (array) o null si falla.
+     * Centraliza la llamada, el logging de errores y el parseo.
+     */
+    private function llamarGeminiJson(string $prompt, float $temperature, int $maxOutputTokens, string $contexto = '')
+    {
+        $apiKey = config('services.gemini.api_key');
+        if (empty($apiKey)) {
+            Log::warning("[{$contexto}] Gemini API Key no configurada");
+            return null;
         }
 
-        // Verificar que el JSON esté completo (termine con } o ])
-        if (!preg_match('/[}\]]$/', $content)) {
-            Log::warning('JSON parece incompleto, intentando cerrar estructura');
-            // Contar llaves y corchetes
-            $openBraces = substr_count($content, '{') - substr_count($content, '}');
-            $openBrackets = substr_count($content, '[') - substr_count($content, ']');
+        $model = self::GEMINI_MODEL;
 
-            // Intentar cerrar
-            for ($i = 0; $i < $openBraces; $i++) {
-                $content .= '}';
-            }
-            for ($i = 0; $i < $openBrackets; $i++) {
-                $content .= ']';
-            }
+        $response = Http::timeout(60)
+            ->withHeaders([
+                'Content-Type' => 'application/json',
+                'x-goog-api-key' => $apiKey,
+            ])
+            ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent", [
+                'contents' => [
+                    ['parts' => [['text' => $prompt]]]
+                ],
+                'generationConfig' => [
+                    'temperature' => $temperature,
+                    'maxOutputTokens' => $maxOutputTokens,
+                    // Fuerza que la salida sea JSON válido
+                    'responseMimeType' => 'application/json',
+                    // Desactiva el "pensamiento" de 2.5-flash: consume tokens de salida
+                    'thinkingConfig' => ['thinkingBudget' => 0],
+                ]
+            ]);
+
+        if (!$response->successful()) {
+            Log::error("[{$contexto}] Error Gemini API: " . $response->status() . ' - ' . $response->body());
+            return null;
         }
 
-        return $content;
+        $responseData = $response->json();
+        $candidate = $responseData['candidates'][0] ?? null;
+
+        if (!$candidate) {
+            Log::error("[{$contexto}] Sin candidates en la respuesta: " . json_encode($responseData));
+            return null;
+        }
+
+        $finishReason = $candidate['finishReason'] ?? 'desconocido';
+        Log::info("[{$contexto}] finishReason: {$finishReason}");
+
+        // Concatenar el texto de todas las parts (ignorando las de "thought")
+        $content = '';
+        foreach (($candidate['content']['parts'] ?? []) as $part) {
+            if (!empty($part['thought'])) {
+                continue;
+            }
+            $content .= $part['text'] ?? '';
+        }
+
+        if ($content === '') {
+            Log::error("[{$contexto}] Respuesta sin texto: " . json_encode($responseData));
+            return null;
+        }
+
+        $content = $this->limpiarJsonString($content);
+        Log::info("[{$contexto}] Contenido recibido: " . substr($content, 0, 300) . '...');
+
+        $parsed = json_decode($content, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            Log::warning("[{$contexto}] Primer intento de JSON falló, reintentando con JSON_INVALID_UTF8_IGNORE");
+            $parsed = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
+        }
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            Log::error("[{$contexto}] Error parsing JSON: " . json_last_error_msg());
+            Log::error("[{$contexto}] Contenido problemático: " . $content);
+            return null;
+        }
+
+        return $parsed;
     }
 
     public function ingredientesPopulares()
@@ -85,18 +137,7 @@ class AIRecipeController extends Controller
             Log::info('Total ingredientes en BD: ' . $totalIngredientes);
 
             if ($totalIngredientes === 0) {
-                return response()->json([
-                    'cebolla',
-                    'ajo',
-                    'tomate',
-                    'aceite de oliva',
-                    'sal',
-                    'pimienta',
-                    'perejil',
-                    'huevos',
-                    'patatas',
-                    'arroz'
-                ]);
+                return response()->json(self::INGREDIENTES_DEFECTO);
             }
 
             $ingredientes = Ingrediente::select('nombre')
@@ -119,18 +160,7 @@ class AIRecipeController extends Controller
         } catch (\Exception $e) {
             Log::error('Error obteniendo ingredientes populares: ' . $e->getMessage());
 
-            return response()->json([
-                'cebolla',
-                'ajo',
-                'tomate',
-                'aceite de oliva',
-                'sal',
-                'pimienta',
-                'perejil',
-                'huevos',
-                'patatas',
-                'arroz'
-            ]);
+            return response()->json(self::INGREDIENTES_DEFECTO);
         }
     }
 
@@ -155,8 +185,10 @@ class AIRecipeController extends Controller
             'caldo de verduras'
         ];
 
-        $sugerencias = array_filter($ingredientesBasicos, function ($ingrediente) use ($ingredients) {
-            return !in_array(strtolower($ingrediente), array_map('strtolower', $ingredients));
+        $existentes = array_map('strtolower', $ingredients);
+
+        $sugerencias = array_filter($ingredientesBasicos, function ($ingrediente) use ($existentes) {
+            return !in_array(strtolower($ingrediente), $existentes);
         });
 
         $sugerenciasFinales = array_slice(array_values($sugerencias), 0, 6);
@@ -166,27 +198,22 @@ class AIRecipeController extends Controller
         return response()->json(['suggestions' => $sugerenciasFinales]);
     }
 
+    /**
+     * Ruta de depuración. PROTÉGELA (auth/admin) o elimínala en producción.
+     */
     public function debug()
     {
         try {
-            $recetasCount = Receta::count();
-            $ingredientesCount = Ingrediente::count();
-
-            $sampleRecetas = Receta::with('ingredientes')->limit(3)->get();
-            $sampleIngredientes = Ingrediente::limit(10)->get();
-
             return response()->json([
-                'recetas_total' => $recetasCount,
-                'ingredientes_total' => $ingredientesCount,
-                'sample_recetas' => $sampleRecetas,
-                'sample_ingredientes' => $sampleIngredientes,
+                'recetas_total' => Receta::count(),
+                'ingredientes_total' => Ingrediente::count(),
+                'sample_recetas' => Receta::with('ingredientes')->limit(3)->get(),
+                'sample_ingredientes' => Ingrediente::limit(10)->get(),
                 'gemini_configured' => !empty(config('services.gemini.api_key'))
             ]);
         } catch (\Exception $e) {
-            return response()->json([
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ], 500);
+            Log::error('Error en debug: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
@@ -202,86 +229,33 @@ class AIRecipeController extends Controller
         Log::info('Ingredientes recibidos: ' . json_encode($ingredients));
 
         try {
-            $apiKey = config('services.gemini.api_key');
-            Log::info('Gemini configurado: ' . (!empty($apiKey) ? 'SÍ' : 'NO'));
-
-            if (!$apiKey) {
+            if (empty(config('services.gemini.api_key'))) {
                 Log::info('Gemini no configurado, usando sugerencias básicas');
                 return $this->sugerirIngredientesBasicos($ingredients);
             }
 
             $ingredientesTexto = implode(', ', $ingredients);
-            $prompt = "Based on these ingredients: {$ingredientesTexto}, suggest 6 additional ingredients that pair well for Spanish and Mediterranean recipes.
-                      Respond ONLY with a JSON array of strings. Example: [\"onion\",\"garlic\",\"tomato\",\"olive oil\",\"bell pepper\",\"parsley\"]
-                      Do not add any additional text, only the JSON array.";
+            $prompt = "You are an expert chef. Based on these ingredients: {$ingredientesTexto}, suggest 6 additional ingredients that pair well for Spanish and Mediterranean recipes. Write the ingredient names in Spanish.
+Respond ONLY with a JSON array of 6 strings. Example: [\"cebolla\",\"ajo\",\"tomate\",\"aceite de oliva\",\"pimiento\",\"perejil\"]";
 
-            Log::info('Prompt para sugerencias: ' . $prompt);
+            $parsedResponse = $this->llamarGeminiJson($prompt, 0.7, 256, 'sugerirIngrediente');
 
-            $response = Http::withHeaders([
-                'Content-Type' => 'application/json',
-            ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={$apiKey}", [
-                'contents' => [
-                    [
-                        'parts' => [
-                            [
-                                'text' => "You are an expert chef. Respond ONLY with a valid JSON array of strings, without additional text.\n\n" . $prompt
-                            ]
-                        ]
-                    ]
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.7,
-                    'maxOutputTokens' => 50,
-                ]
-            ]);
-
-            if (!$response->successful()) {
-                Log::error('Error en la llamada a Gemini API para sugerencias: ' . $response->status());
-                return $this->sugerirIngredientesBasicos($ingredients);
-            }
-
-            $responseData = $response->json();
-
-            if (!isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
-                Log::error('Estructura de respuesta inesperada de Gemini para sugerencias');
-                return $this->sugerirIngredientesBasicos($ingredients);
-            }
-
-            $content = $responseData['candidates'][0]['content']['parts'][0]['text'];
-            Log::info('Respuesta RAW de Gemini para sugerencias (primeros 500 chars): ' . substr($content, 0, 500));
-
-            // Limpiar el contenido
-            $content = $this->limpiarJsonString($content);
-            Log::info('Contenido limpio (primeros 500 chars): ' . substr($content, 0, 500));
-            Log::info('Contenido limpio (últimos 100 chars): ' . substr($content, -100));
-
-            // Intentar decodificar
-            $parsedResponse = json_decode($content, true);
-
-            // Si aún falla, intentar con JSON_INVALID_UTF8_IGNORE
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::warning('Primer intento de JSON falló para sugerencias: ' . json_last_error_msg());
-                $parsedResponse = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
-            }
-
-            Log::info('JSON decode - Error: ' . json_last_error() . ' (' . json_last_error_msg() . ')');
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::error('Error parsing JSON for ingredient suggestions: ' . json_last_error_msg());
-                Log::error('Contenido problemático: ' . $content);
+            if ($parsedResponse === null) {
                 return $this->sugerirIngredientesBasicos($ingredients);
             }
 
             Log::info('Response parseada: ' . json_encode($parsedResponse));
 
             if (is_array($parsedResponse)) {
+                // Array directo de strings
                 if (isset($parsedResponse[0]) && is_string($parsedResponse[0])) {
-                    Log::info('Devolviendo array directo de sugerencias: ' . json_encode($parsedResponse));
                     return response()->json(['suggestions' => $parsedResponse]);
                 }
+
+                // Array dentro de alguna clave (por ejemplo {"suggestions": [...]})
                 foreach ($parsedResponse as $key => $value) {
                     if (is_array($value) && isset($value[0]) && is_string($value[0])) {
-                        Log::info("Devolviendo sugerencias desde clave '{$key}': " . json_encode($value));
+                        Log::info("Devolviendo sugerencias desde clave '{$key}'");
                         return response()->json(['suggestions' => $value]);
                     }
                 }
@@ -293,45 +267,43 @@ class AIRecipeController extends Controller
             Log::error('=== ERROR EN sugerirIngrediente ===');
             Log::error('Mensaje: ' . $e->getMessage());
             Log::error('Archivo: ' . $e->getFile() . ':' . $e->getLine());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
-            Log::error('=== FIN ERROR ===');
             return $this->sugerirIngredientesBasicos($ingredients);
         }
     }
 
+    /**
+     * Ruta de depuración. PROTÉGELA (auth/admin) o elimínala en producción.
+     */
     public function debugGemini()
     {
         try {
             $apiKey = config('services.gemini.api_key');
+            $model = self::GEMINI_MODEL;
 
             $testResult = null;
             $testError = null;
 
             if (!empty($apiKey)) {
                 try {
-                    $response = Http::withHeaders([
-                        'Content-Type' => 'application/json',
-                    ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={$apiKey}", [
-                        'contents' => [
-                            [
-                                'parts' => [
-                                    [
-                                        'text' => 'Responde solo con: OK'
-                                    ]
-                                ]
+                    $response = Http::timeout(30)
+                        ->withHeaders([
+                            'Content-Type' => 'application/json',
+                            'x-goog-api-key' => $apiKey,
+                        ])
+                        ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent", [
+                            'contents' => [
+                                ['parts' => [['text' => 'Responde solo con: OK']]]
+                            ],
+                            'generationConfig' => [
+                                'maxOutputTokens' => 20,
+                                'thinkingConfig' => ['thinkingBudget' => 0],
                             ]
-                        ],
-                        'generationConfig' => [
-                            'maxOutputTokens' => 10,
-                        ]
-                    ]);
+                        ]);
 
                     Log::info('Status de respuesta: ' . $response->status());
-                    Log::info('Body completo: ' . $response->body());
 
                     if ($response->successful()) {
                         $responseData = $response->json();
-                        Log::info('Response data: ' . json_encode($responseData));
 
                         if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
                             $testResult = $responseData['candidates'][0]['content']['parts'][0]['text'];
@@ -352,17 +324,19 @@ class AIRecipeController extends Controller
 
             if (!empty($apiKey)) {
                 try {
-                    $modelResponse = Http::withHeaders([
-                        'Content-Type' => 'application/json',
-                    ])->get("https://generativelanguage.googleapis.com/v1beta/models?key={$apiKey}");
+                    $modelResponse = Http::timeout(30)
+                        ->withHeaders(['x-goog-api-key' => $apiKey])
+                        ->get('https://generativelanguage.googleapis.com/v1beta/models');
 
                     if ($modelResponse->successful()) {
                         $modelData = $modelResponse->json();
                         if (isset($modelData['models'])) {
-                            $modelosDisponibles = array_map(function ($model) {
-                                return $model['name'] ?? 'N/A';
-                            }, array_slice($modelData['models'], 0, 10));
+                            $modelosDisponibles = array_map(function ($m) {
+                                return $m['name'] ?? 'N/A';
+                            }, $modelData['models']);
                         }
+                    } else {
+                        $modelosError = 'HTTP ' . $modelResponse->status() . ': ' . $modelResponse->body();
                     }
                 } catch (\Exception $e) {
                     $modelosError = $e->getMessage();
@@ -371,11 +345,10 @@ class AIRecipeController extends Controller
 
             return response()->json([
                 'gemini_api_key_configured' => !empty($apiKey),
-                'gemini_api_key_preview' => $apiKey ? substr($apiKey, 0, 10) . '...' : null,
                 'gemini_test_successful' => $testResult !== null,
                 'gemini_test_error' => $testError,
                 'gemini_test_response' => $testResult,
-                'modelo_utilizado' => 'gemini-1.5-flash',
+                'modelo_utilizado' => $model,
                 'modelos_disponibles' => $modelosDisponibles,
                 'modelos_error' => $modelosError,
                 'recetas_total' => Receta::count(),
@@ -391,10 +364,8 @@ class AIRecipeController extends Controller
                 })
             ]);
         } catch (\Exception $e) {
-            return response()->json([
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ], 500);
+            Log::error('Error en debugGemini: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
@@ -404,119 +375,53 @@ class AIRecipeController extends Controller
         Log::info('=== INICIO generarRecetasConIA ===');
         Log::info('Ingredientes recibidos: ' . $ingredientesTexto);
 
-        $apiKey = config('services.gemini.api_key');
-        if (empty($apiKey)) {
-            Log::warning('Gemini API Key no configurada');
-            return [];
-        }
-
         $prompt = "You are an expert chef specialized in Spanish and Mediterranean cuisine.
 
 With these available ingredients: {$ingredientesTexto}
 
-Generate 3-4 detailed recipes. Each recipe must include ALL required fields.
+Generate 3 detailed recipes. Write recipe names, ingredient names and steps in Spanish. Use the vast majority of the provided ingredients in each recipe, not just one or two.
 
-IMPORTANT: Respond ONLY with valid JSON in this EXACT format (without additional text):
-
+Return a JSON object with this structure:
 {
   \"recipes\": [
     {
       \"id\": \"ai_001\",
       \"usuario_id\": 0,
-      \"nombre\": \"Specific and attractive recipe name\",
-      \"tipoCocina\": \"Spanish\" | \"Mediterranean\" | \"Homestyle\",
-      \"tipoComida\": \"Breakfast\" | \"Lunch\" | \"Dinner\" | \"Appetizer\" | \"Dessert\",
+      \"nombre\": \"Recipe name\",
+      \"tipoCocina\": \"Spanish\",
+      \"tipoComida\": \"Lunch\",
       \"tiempoCocinado\": \"30\",
-      \"dificultad\": \"Easy\" | \"Intermediate\" | \"Hard\",
+      \"dificultad\": \"Easy\",
       \"porciones\": 4,
       \"caloriasPorPorcion\": 350,
-      \"ingredientes\": [
-        {\"nombreIngrediente\": \"Exact ingredient name\"},
-        {\"nombreIngrediente\": \"Another ingredient\"}
-      ],
-      \"pasos\": [
-        {\"nombrePaso\": \"Prepare ingredients by washing and chopping...\"},
-        {\"nombrePaso\": \"In a pan, heat oil over medium heat...\"},
-        {\"nombrePaso\": \"Add ingredients and cook for...\"}
-      ],
+      \"ingredientes\": [{\"nombreIngrediente\": \"name\"}],
+      \"pasos\": [{\"nombrePaso\": \"step text\"}],
       \"valoracion\": 4.5
     }
   ]
 }
 
-MANDATORY RULES:
-- tipoCocina: Only use \"Spanish\", \"Mediterranean\" or \"Homestyle\"
-- tipoComida: Only use \"Breakfast\", \"Lunch\", \"Dinner\", \"Appetizer\" or \"Dessert\"
-- tiempoCocinado: Only put the number, don't add time units
-- dificultad: Only \"Easy\", \"Intermediate\" or \"Hard\"
-- porciones: Integer between 1 and 8
-- caloriasPorPorcion: Realistic integer (200-800)
-- ingredientes: Array with objects {\"nombreIngrediente\": string}
-- pasos: Array with objects {\"nombrePaso\": string} - minimum 5 steps, don't add cleaning or ingredient preparation steps separately, only add step content without \"Step 1:\", etc.
-- valoracion: Decimal number between 3.0 and 5.0
-- id: Use format \"ai_001\", \"ai_002\", etc.
-
-Focus on authentic and realistic recipes that actually use the provided ingredients. And above all, remember to use the vast majority of the ingredients, not just one or two.";
+Rules:
+- tipoCocina: one of Spanish, Mediterranean, Homestyle
+- tipoComida: one of Breakfast, Lunch, Dinner, Appetizer, Dessert
+- tiempoCocinado: number only (minutes), as a string, no units
+- dificultad: one of Easy, Intermediate, Hard
+- porciones: integer between 1 and 8
+- caloriasPorPorcion: realistic integer between 200 and 800
+- ingredientes: array of objects {\"nombreIngrediente\": string}
+- pasos: array of objects {\"nombrePaso\": string}, minimum 5 steps, do not add cleaning or ingredient preparation as separate steps, and do not prefix with 'Step 1:' etc.
+- valoracion: decimal number between 3.0 and 5.0
+- id: use ai_001, ai_002, ai_003";
 
         try {
-            Log::info('Iniciando llamada a Gemini...');
+            $parsedResponse = $this->llamarGeminiJson($prompt, 0.8, 8192, 'generarRecetasConIA');
 
-            $response = Http::withHeaders([
-                'Content-Type' => 'application/json',
-            ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={$apiKey}", [
-                'contents' => [
-                    [
-                        'parts' => [
-                            [
-                                'text' => $prompt
-                            ]
-                        ]
-                    ]
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.8,
-                    'maxOutputTokens' => 2500,
-                ]
-            ]);
-
-            if (!$response->successful()) {
-                Log::error('Error en Gemini API: ' . $response->status());
-                return [];
-            }
-
-            $responseData = $response->json();
-
-            if (!isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
-                Log::error('Estructura de respuesta inesperada');
-                return [];
-            }
-
-            $content = $responseData['candidates'][0]['content']['parts'][0]['text'];
-
-            // Limpiar el contenido
-            $content = $this->limpiarJsonString($content);
-
-            Log::info('Contenido limpio recibido (primeros 500 chars): ' . substr($content, 0, 500));
-            Log::info('Contenido limpio recibido (últimos 200 chars): ' . substr($content, -200));
-
-            // Intentar decodificar
-            $parsedResponse = json_decode($content, true);
-
-            // Si aún falla, intentar con JSON_INVALID_UTF8_IGNORE
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::warning('Primer intento de JSON falló: ' . json_last_error_msg());
-                Log::warning('Intentando con JSON_INVALID_UTF8_IGNORE');
-                $parsedResponse = json_decode($content, true, 512, JSON_INVALID_UTF8_IGNORE);
-            }
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::error('Error parsing JSON: ' . json_last_error_msg());
-                Log::error('Contenido problemático: ' . $content);
+            if ($parsedResponse === null) {
                 return [];
             }
 
             if (!isset($parsedResponse['recipes']) || !is_array($parsedResponse['recipes'])) {
-                Log::error('Estructura de respuesta inválida');
+                Log::error('Estructura de respuesta inválida: ' . json_encode($parsedResponse));
                 return [];
             }
 
@@ -533,7 +438,7 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
                     'nombre' => trim($receta['nombre']),
                     'tipoCocina' => $receta['tipoCocina'] ?? 'Homestyle',
                     'tipoComida' => $receta['tipoComida'] ?? 'Lunch',
-                    'tiempoCocinado' => $receta['tiempoCocinado'] ?? '30',
+                    'tiempoCocinado' => (string)($receta['tiempoCocinado'] ?? '30'),
                     'dificultad' => $receta['dificultad'] ?? 'Intermediate',
                     'porciones' => (int)($receta['porciones'] ?? 4),
                     'caloriasPorPorcion' => (int)($receta['caloriasPorPorcion'] ?? 350),
@@ -549,7 +454,7 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
                 }
 
                 $recetasGeneradas[] = $recetaFormateada;
-                Log::info("Receta procesada: " . $recetaFormateada['nombre']);
+                Log::info('Receta procesada: ' . $recetaFormateada['nombre']);
             }
 
             Log::info('Total recetas generadas: ' . count($recetasGeneradas));
@@ -574,16 +479,15 @@ Focus on authentic and realistic recipes that actually use the provided ingredie
             $recetas = $this->generarRecetasConIA($ingredients);
             Log::info('Recetas generadas por IA: ' . count($recetas));
 
-            // IMPORTANTE: Log la respuesta completa antes de enviarla
             $response = [
                 'recetas' => $recetas,
-                'message' => 'Recetas creadas por IA basadas en tus ingredientes',
+                'message' => count($recetas) > 0
+                    ? 'Recetas creadas por IA basadas en tus ingredientes'
+                    : 'No se pudieron generar recetas, inténtalo de nuevo',
                 'total' => count($recetas),
                 'recetas_bd' => 0,
                 'recetas_ia' => count($recetas)
             ];
-
-            Log::info('Respuesta a enviar: ' . json_encode($response));
 
             return response()->json($response);
         } catch (\Illuminate\Validation\ValidationException $e) {
